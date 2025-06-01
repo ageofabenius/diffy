@@ -3,28 +3,42 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MapDiff {
-    Unchanged {
-        key: String,
-        value: String,
-    },
-    EntryAdded {
-        key: String,
-        value: String,
-    },
-    EntryRemoved {
-        key: String,
-        value: String,
-    },
-    ValueModified {
-        key: String,
-        old_value: String,
-        new_value: String,
-    },
-    KeyModified {
-        old_key: String,
-        new_key: String,
-        value: String,
-    },
+    Unchanged(EntryUnchanged),
+    EntryAdded(EntryAdded),
+    EntryRemoved(EntryRemoved),
+    ValueModified(ValueModified),
+    KeyModified(KeyModified),
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryUnchanged {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryAdded {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryRemoved {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueModified {
+    pub key: String,
+    pub old_value: String,
+    pub new_value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyModified {
+    pub old_key: String,
+    pub new_key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,39 +50,72 @@ pub enum ValueDiff {
     },
 }
 
-fn map_diff(left: &HashMap<String, String>, right: &HashMap<String, String>) -> Vec<MapDiff> {
-    let mut diffs: Vec<MapDiff> = Vec::new();
+impl MapDiff {
+    pub fn is_change(&self) -> bool {
+        !matches!(self, MapDiff::Unchanged(_))
+    }
+}
 
+fn map_diff(left: &HashMap<String, String>, right: &HashMap<String, String>) -> Vec<MapDiff> {
+    // Collect all keys from both maps
     let all_keys: HashSet<String> = left.keys().chain(right.keys()).cloned().collect();
 
+    let mut diffs: Vec<MapDiff> = Vec::new();
+    let mut entries_added: Vec<EntryAdded> = Vec::new();
+    let mut entries_removed: Vec<EntryRemoved> = Vec::new();
+
+    // Iterate, comparing values for all collected keys
     for key in all_keys {
         match (left.get(&key), right.get(&key)) {
             (Some(left_value), Some(right_value)) => {
                 diffs.push(match diff_map_values(left_value, right_value) {
-                    ValueDiff::Unchanged => MapDiff::Unchanged {
+                    ValueDiff::Unchanged => MapDiff::Unchanged(EntryUnchanged {
                         key: key.clone(),
                         value: left_value.clone(),
-                    },
+                    }),
                     ValueDiff::Modified {
                         old_value,
                         new_value,
-                    } => MapDiff::ValueModified {
+                    } => MapDiff::ValueModified(ValueModified {
                         key: key.clone(),
                         old_value,
                         new_value,
-                    },
+                    }),
                 });
             }
-            (Some(left_value), None) => diffs.push(MapDiff::EntryRemoved {
+            (Some(left_value), None) => entries_removed.push(EntryRemoved {
                 key: key,
                 value: left_value.clone(),
             }),
-            (None, Some(right_value)) => diffs.push(MapDiff::EntryAdded {
+            (None, Some(right_value)) => entries_added.push(EntryAdded {
                 key: key,
                 value: right_value.clone(),
             }),
             (None, None) => unreachable!(),
         }
+    }
+
+    // Iterate on entries_removed, to see if any entries_added have the same value,
+    // in which case we treat this as a change to a key rather than a deletion and insertion
+    for entry in entries_removed {
+        // Try to match it to an entry_added
+        let matched_position = entries_added
+            .iter()
+            .position(|added| entry.value == added.value);
+        if let Some(position) = matched_position {
+            let added_entry = entries_added.swap_remove(position);
+            diffs.push(MapDiff::KeyModified(KeyModified {
+                old_key: entry.key.clone(),
+                new_key: added_entry.key.clone(),
+                value: entry.value.clone(),
+            }));
+        } else {
+            diffs.push(MapDiff::EntryRemoved(entry));
+        }
+    }
+
+    for entry in entries_added {
+        diffs.push(MapDiff::EntryAdded(entry));
     }
 
     diffs
@@ -123,14 +170,17 @@ mod tests {
         ]);
 
         let diffs = map_diff(&map_1, &map_2);
+        let changes = diffs
+            .into_iter()
+            .filter(|d| d.is_change())
+            .collect::<Vec<_>>();
 
-        assert_eq!(diffs.len(), 1);
         assert_eq!(
-            diffs,
-            vec![MapDiff::EntryRemoved {
+            changes,
+            vec![MapDiff::EntryRemoved(EntryRemoved {
                 key: "key_3".to_string(),
                 value: "value_3".to_string(),
-            }]
+            })],
         );
     }
 
@@ -150,19 +200,22 @@ mod tests {
         ]);
 
         let diffs = map_diff(&map_1, &map_2);
+        let changes = diffs
+            .into_iter()
+            .filter(|d| d.is_change())
+            .collect::<Vec<_>>();
 
-        assert_eq!(diffs.len(), 1);
         assert_eq!(
-            diffs,
-            vec![MapDiff::EntryAdded {
+            changes,
+            vec![MapDiff::EntryAdded(EntryAdded {
                 key: "key_2".to_string(),
                 value: "value_2".to_string(),
-            }]
+            })]
         );
     }
 
     #[test]
-    fn test_value_changed() {
+    fn test_value_modified() {
         let map_1 = HashMap::from([
             ("key_1".to_string(), "value_1".to_string()),
             ("key_2".to_string(), "value_2".to_string()),
@@ -178,6 +231,87 @@ mod tests {
         ]);
 
         let diffs = map_diff(&map_1, &map_2);
-        dbg!(&diffs);
+        let changes = diffs
+            .into_iter()
+            .filter(|d| d.is_change())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            changes,
+            vec![MapDiff::ValueModified(ValueModified {
+                key: "key_3".to_string(),
+                old_value: "value_3".to_string(),
+                new_value: "value_3.0".to_string(),
+            })]
+        );
+    }
+
+    #[test]
+    fn test_key_modified() {
+        let map_1 = HashMap::from([
+            ("key_1".to_string(), "value_1".to_string()),
+            ("key_2".to_string(), "value_2".to_string()),
+            ("key_3".to_string(), "value_3".to_string()),
+            ("key_4".to_string(), "value_4".to_string()),
+        ]);
+
+        let map_2 = HashMap::from([
+            ("key_1".to_string(), "value_1".to_string()),
+            ("key_2".to_string(), "value_2".to_string()),
+            ("key_3.0".to_string(), "value_3".to_string()),
+            ("key_4".to_string(), "value_4".to_string()),
+        ]);
+
+        let diffs = map_diff(&map_1, &map_2);
+        let changes = diffs
+            .into_iter()
+            .filter(|d| d.is_change())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            changes,
+            vec![MapDiff::KeyModified(KeyModified {
+                old_key: "key_3".to_string(),
+                new_key: "key_3.0".to_string(),
+                value: "value_3".to_string(),
+            })]
+        );
+    }
+
+    #[test]
+    fn test_entry_added_and_removed() {
+        let map_1 = HashMap::from([
+            ("key_1".to_string(), "value_1".to_string()),
+            ("key_2".to_string(), "value_2".to_string()),
+            ("key_3".to_string(), "value_3".to_string()),
+            ("key_4".to_string(), "value_4".to_string()),
+        ]);
+
+        let map_2 = HashMap::from([
+            ("key_1".to_string(), "value_1".to_string()),
+            ("key_2".to_string(), "value_2".to_string()),
+            ("key_3".to_string(), "value_3".to_string()),
+            ("key_5".to_string(), "value_5".to_string()),
+        ]);
+
+        let diffs = map_diff(&map_1, &map_2);
+        let changes = diffs
+            .into_iter()
+            .filter(|d| d.is_change())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            changes,
+            vec![
+                MapDiff::EntryRemoved(EntryRemoved {
+                    key: "key_4".to_string(),
+                    value: "value_4".to_string(),
+                }),
+                MapDiff::EntryAdded(EntryAdded {
+                    key: "key_5".to_string(),
+                    value: "value_5".to_string(),
+                }),
+            ],
+        );
     }
 }
