@@ -11,43 +11,40 @@ pub enum MapDiff {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntryUnchanged {
-    pub key: Value,
+    pub key: String,
     pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntryAdded {
-    pub key: Value,
+    pub key: String,
     pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntryRemoved {
-    pub key: Value,
+    pub key: String,
     pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueModified {
-    pub key: Value,
+    pub key: String,
     pub old_value: Value,
     pub new_value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeyModified {
-    pub old_key: Value,
-    pub new_key: Value,
+    pub old_key: String,
+    pub new_key: String,
     pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueDiff {
     Unchanged,
-    Modified {
-        old_value: Value,
-        new_value: Value,
-    },
+    Modified { old_value: Value, new_value: Value },
 }
 
 impl MapDiff {
@@ -56,9 +53,9 @@ impl MapDiff {
     }
 }
 
-fn map_diff(left: &HashMap<Value, Value>, right: &HashMap<Value, Value>) -> Vec<MapDiff> {
+fn map_diff(left: &HashMap<String, Value>, right: &HashMap<String, Value>) -> Vec<MapDiff> {
     // Collect all keys from both maps
-    let all_keys: HashSet<Value> = left.keys().chain(right.keys()).cloned().collect();
+    let all_keys: HashSet<String> = left.keys().chain(right.keys()).cloned().collect();
 
     let mut diffs: Vec<MapDiff> = Vec::new();
     let mut entries_added: Vec<EntryAdded> = Vec::new();
@@ -137,6 +134,8 @@ fn diff_map_values(left: &Value, right: &Value) -> ValueDiff {
 mod tests {
 
     use std::vec;
+
+    use serde_json::json;
 
     use super::*;
 

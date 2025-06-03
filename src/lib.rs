@@ -1,4 +1,5 @@
-pub mod map_diff;
+pub mod diff;
+pub mod file_loading;
 
 // use similar::TextDiff;
 
